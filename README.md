@@ -6,14 +6,20 @@ Current venue adapters:
 
 - `bitget`
 - `binance`
+- `bingx`
 - `coingecko`
 - `gate`
+- `bitmart`
+- `lbank`
 - `trade.xyz`
 - `lighter`
 - `mexc`
 - `ondo`
+- `ourbit`
+- `raydium`
 - `stablestock`
 - `vest`
+- `xt`
 - `xstocks`
 - issuer summaries from `rwa.xyz`: `dinari`, `securitize`, `superstate`, `wisdomtree`, `stokr`, `backed`, `remora`, `swarm`
 
@@ -22,6 +28,12 @@ Current commands:
 - `rwa venues`
 - `rwa assets`
 - `rwa discover <query>`
+- `rwa discover <query> --refresh`
+- `rwa discover-snapshot <query>`
+- `rwa cache clear`
+- `rwa config list`
+- `rwa config set <key> <value>`
+- `rwa config unset <key>`
 - `rwa resolve <asset>`
 - `rwa assets --venue lighter`
 - `rwa quote tsla`
@@ -97,7 +109,22 @@ rwa discover gold
 `discover` uses:
 
 - CoinMarketCap internal RWA endpoints for underlying assets, token wrappers, and venue lists
+- Uniblock direct `CoinMarketCap` category endpoints for broader tokenized stock and tokenized commodity asset coverage
+- Dinari `dShares` for public stock-list discovery plus `CMC` `*.D` wrappers for Dinari contract-address discovery
 - CoinGecko tokenized-gold markets for tokenized commodity discovery
+
+Force a refresh if you want to bypass the 24-hour cache:
+
+```bash
+rwa discover gold --refresh
+```
+
+Build a normalized discovery snapshot for downstream ingestion:
+
+```bash
+rwa discover-snapshot gold --json
+rwa discover-snapshot gold --out tmp/discovery-gold.json
+```
 
 If you have a CoinGecko key, export one of:
 
@@ -109,15 +136,72 @@ export COINGECKO_PRO_API_KEY=...
 
 When either variable is set, `rwa` uses CoinGecko's Pro host automatically.
 
+Optional onchain enrichment keys:
+
+```bash
+export BIRDEYE_API_KEY=...
+export UNIBLOCK_API_KEY=...
+export ODOS_API_KEY=...
+export LIFI_API_KEY=...
+export ONEINCH_API_KEY=...
+export OKX_API_KEY=...
+export OKX_SECRET_KEY=...
+export OKX_API_PASSPHRASE=...
+export ZEROX_API_KEY=...
+```
+
+Or persist them locally:
+
+```bash
+rwa config set birdeye ...
+rwa config set uniblock ...
+rwa config set odos ...
+rwa config set lifi ...
+rwa config set 1inch ...
+rwa config set okx ...
+rwa config set okxsecret ...
+rwa config set okxpassphrase ...
+rwa config set 0x ...
+rwa config list
+```
+
+The CLI loads environment variables first and falls back to `~/.config/rwa-cli/config.json`.
+For provider-specific coverage, `rwa` prefers sources that can run without API keys when possible, skips key-only providers when credentials are missing, and prints setup hints in terminal output when optional keys would widen coverage.
+
+Discovery cache:
+
+```bash
+# optional, defaults to ./.cache/rwa
+export RWA_CACHE_DIR=...
+
+# optional, defaults to 24
+export RWA_CACHE_TTL_HOURS=24
+
+# optional, defaults to 1
+export RWA_SLIPPAGE_CACHE_TTL_HOURS=1
+```
+
 ## Notes
 
 - `+/-2% liquidity` is normalized as combined notional liquidity resting within 2% of the mid price when the venue exposes an order book.
 - `price deviation` is computed as `(venue price - Yahoo reference price) / Yahoo reference price * 100`.
 - Some venues do not expose public bid/ask or order-book depth for these assets. Those fields are returned as `null` and shown as `-` in table output.
-- Lighter currently uses public REST endpoints for mark/volume/OI/funding. Its order-book websocket is not yet reliably reproducible from this Node CLI, so bid/ask and `+/-2% liquidity` may be `null`.
+- Lighter now uses public REST endpoints for mark/volume/OI/funding plus its public order-book websocket, so `bid`, `ask`, and `+/-2% liquidity` are available when the websocket returns a live book snapshot.
+- XT's frontend uses the same public `market/public` ticker and depth endpoints as the CLI. Some direct symbols such as `gold_usdt` still publish an empty book there, so `bid`, `ask`, and `+/-2% liquidity` stay `null`.
+- Ourbit's frontend uses open `platform/spot/market` endpoints, and the CLI now reads ticker plus live depth directly from those routes.
+- BingX spot is now connected through the public `openApi` market endpoints. The browser frontend still uses signed first-party calls internally, but the public spot ticker and depth routes are sufficient for native bid, ask, and `+/-2%` liquidity.
 - Yahoo reference prices come from Yahoo Finance's public `v8/finance/chart` endpoint with symbol mapping for commodities and selected non-US assets.
-- `coingecko` currently acts as a bootstrap source for tokenized gold assets such as `XAUT`, `PAXG`, `KAU`, `PGOLD`, `XAUM`, and `GGBR`. Those prices are not venue-native and will be replaced with native connectors over time.
+- `coingecko` now acts as a broader bootstrap source across tokenized stocks, commodities, silver, ETFs, real estate, and treasury categories. Those prices are not venue-native and will be replaced with native connectors over time.
+- `xstocks` and `ondo` use `Birdeye` to enrich Solana and EVM token market data, holder count, market cap, and onchain market lists. The CLI will use native `BIRDEYE_API_KEY` if present, otherwise it falls back to `Uniblock direct/Birdeye` via `UNIBLOCK_API_KEY`.
+- `xstocks` now uses `Jupiter`'s Solana quote API to estimate Solana-side `+/-2% liquidity`, with those slippage estimates cached for 1 hour by default.
+- `xstocks` now uses `Odos` for Ethereum-side route-based `+/-2% liquidity` when `ODOS_API_KEY` is set.
+- `ondo` now uses `Li.fi` and `1inch` for Ethereum and BNB Chain route-based `+/-2% liquidity` when `LIFI_API_KEY` and `ONEINCH_API_KEY` are set, and keeps `Odos` as an additional EVM routing source where available.
+- `OKX` wallet quote support is scaffolded, but it requires the full `OKX_API_PASSPHRASE` in addition to key and secret before the CLI can use it.
+- `xstocks` now uses `STON.fi` on TON to enrich TON-side price, pool liquidity, and route-based `+/-2% liquidity` where TON pools exist.
+- `raydium` is now a first-class Solana venue in the CLI for xStocks wrappers that are live on Raydium pools.
 - `discover` currently uses CoinMarketCap internal endpoints. They are effective for RWA discovery but are undocumented and may change.
+- `discover` also uses `Uniblock` direct `CoinMarketCap` category endpoints, when `UNIBLOCK_API_KEY` is set, to widen coverage for tokenized stock, commodities, silver, ETFs, real estate, and treasury categories.
+- discovery responses are cached on disk for 24 hours by default under `.cache/rwa` to avoid repeatedly pulling the same category and RWA listing data.
 
 ## Sources
 

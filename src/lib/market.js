@@ -59,14 +59,23 @@ export function priceDeviationPct(price, referencePrice) {
 }
 
 export function normalizeOrderBook(levels) {
+  const normalizeLevel = (level) => {
+    if (Array.isArray(level)) {
+      const [price, size] = level;
+      return {
+        price: Number(price),
+        size: Number(size)
+      };
+    }
+
+    return {
+      price: Number(level?.price ?? level?.p),
+      size: Number(level?.size ?? level?.q)
+    };
+  };
+
   return {
-    bids: (levels?.bids ?? []).map(([price, size]) => ({
-      price: Number(price),
-      size: Number(size)
-    })),
-    asks: (levels?.asks ?? []).map(([price, size]) => ({
-      price: Number(price),
-      size: Number(size)
-    }))
+    bids: (levels?.bids ?? []).map(normalizeLevel),
+    asks: (levels?.asks ?? []).map(normalizeLevel)
   };
 }

@@ -10,7 +10,11 @@ import { liquidityWithinPct, priceDeviationPct } from "../src/lib/market.js";
 import { tokenExplorerUrl } from "../src/lib/networks.js";
 import { maxMetric, optionalNumber, sortNetworkRows, sumMetric } from "../src/lib/onchain-data.js";
 import { okxChainIndexForNetwork } from "../src/lib/okx.js";
-import { estimatePreferredRouteLiquidity } from "../src/lib/route-liquidity.js";
+import {
+  estimatePreferredRouteLiquidity,
+  missingRouteLiquidityProviderSettings,
+  routeLiquidityProviderRequirements
+} from "../src/lib/route-liquidity.js";
 import { aggregateAssets } from "../src/services/query.js";
 import { assetSymbolToYahoo } from "../src/services/reference.js";
 import { buildDiscoverySnapshot } from "../src/services/discovery.js";
@@ -130,6 +134,12 @@ test("estimatePreferredRouteLiquidity falls back to the first successful provide
 
   assert.equal(result.provider, "second");
   assert.equal(result.liquidityUsd, 123);
+});
+
+test("route liquidity provider requirements expose key-only providers", () => {
+  assert.deepEqual(routeLiquidityProviderRequirements("odos_quote"), []);
+  assert.deepEqual(routeLiquidityProviderRequirements("oneinch_quote"), ["ONEINCH_API_KEY"]);
+  assert.ok(Array.isArray(missingRouteLiquidityProviderSettings("oneinch_quote")));
 });
 
 test("assetSymbolToYahoo maps tokenized gold wrappers to the gold benchmark", () => {

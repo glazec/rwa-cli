@@ -25,11 +25,22 @@ const YAHOO_SYMBOL_MAP = {
   SOFTBANK: "9984.T"
 };
 
+const REFERENCE_SYMBOL_ALIASES = {
+  XAUT: "XAU",
+  PAXG: "XAU",
+  XAUM: "XAU",
+  KAU: "XAU",
+  PGOLD: "XAU",
+  GGBR: "XAU"
+};
+
 const YAHOO_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 const REFERENCE_CACHE = new Map();
 
 export function assetSymbolToYahoo(symbol) {
-  return YAHOO_SYMBOL_MAP[canonicalSymbol(symbol)] ?? canonicalSymbol(symbol);
+  const canonical = canonicalSymbol(symbol);
+  const referenceSymbol = REFERENCE_SYMBOL_ALIASES[canonical] ?? canonical;
+  return YAHOO_SYMBOL_MAP[referenceSymbol] ?? referenceSymbol;
 }
 
 async function fetchYahooChartPrice(symbol) {

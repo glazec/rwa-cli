@@ -3,6 +3,7 @@ import { estimateLifiExitLiquidityUsd } from "./lifi.js";
 import { estimateOdosExitLiquidityUsd } from "./odos.js";
 import { estimateOkxExitLiquidityUsd } from "./okx.js";
 import { estimateOneInchExitLiquidityUsd } from "./oneinch.js";
+import { hasSetting } from "./config.js";
 
 export const ROUTE_LIQUIDITY_PROVIDERS = {
   jupiter_quote: estimateJupiterExitLiquidityUsd,
@@ -12,8 +13,31 @@ export const ROUTE_LIQUIDITY_PROVIDERS = {
   okx_quote: estimateOkxExitLiquidityUsd
 };
 
+export const ROUTE_LIQUIDITY_PROVIDER_REQUIREMENTS = {
+  jupiter_quote: [],
+  lifi_quote: [],
+  odos_quote: [],
+  oneinch_quote: ["ONEINCH_API_KEY"],
+  okx_quote: ["OKX_API_KEY", "OKX_SECRET_KEY", "OKX_API_PASSPHRASE"]
+};
+
+export function routeLiquidityProviderRequirements(provider) {
+  return ROUTE_LIQUIDITY_PROVIDER_REQUIREMENTS[provider] ?? [];
+}
+
+export function isRouteLiquidityProviderAvailable(provider) {
+  return routeLiquidityProviderRequirements(provider).every((key) => hasSetting(key));
+}
+
+export function missingRouteLiquidityProviderSettings(provider) {
+  return routeLiquidityProviderRequirements(provider).filter((key) => !hasSetting(key));
+}
+
 function normalizeProvider(provider) {
   if (typeof provider === "string") {
+    if (!isRouteLiquidityProviderAvailable(provider)) {
+      return null;
+    }
     const estimate = ROUTE_LIQUIDITY_PROVIDERS[provider];
     return estimate ? { source: provider, estimate } : null;
   }

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import {
   formatCompactCurrency,
@@ -9,12 +11,21 @@ import {
   formatSignedPercent,
   printTable
 } from "./lib/format.js";
+import { cacheSettings, clearCache, setCacheBypass } from "./lib/cache.js";
+import {
+  getConfigPath,
+  hasSetting,
+  listSettings,
+  setSetting,
+  unsetSetting
+} from "./lib/config.js";
+import { fetchOndoAssets } from "./lib/ondo-app.js";
 import {
   aggregateAssets,
   findExactMatchingAssets,
   findMatchingAssets
 } from "./services/query.js";
-import { discoverAssets } from "./services/discovery.js";
+import { buildDiscoverySnapshot, discoverAssets } from "./services/discovery.js";
 import { getQuotesForSymbols, listAllMarkets, resolveVenue, VENUES } from "./services/registry.js";
 
 const program = new Command();
@@ -57,11 +68,19 @@ function emitSuccess(command, data, commandOptions, render, meta = {}) {
   }
 
   if (output.json) {
-    console.log(JSON.stringify(data, null, 2));
+    console.log(JSON.stringify({ ...data, advisories: meta.advisories ?? [] }, null, 2));
     return;
   }
 
   render(data);
+
+  if ((meta.advisories ?? []).length > 0) {
+    console.log("");
+    console.log("notes");
+    for (const advisory of meta.advisories) {
+      console.log(`- ${advisory}`);
+    }
+  }
 }
 
 function fail(code, message, details = {}, exitCode = 1) {
@@ -139,6 +158,119 @@ function renderExplorerLinks(quote) {
   }
 }
 
+function renderOnchainNetworkBreakdown(quote) {
+  if (!quote.onchainNetworkBreakdown?.length) {
+    return;
+  }
+
+  console.log("");
+  console.log(`${quote.venue} onchain networks`);
+  printTable(quote.onchainNetworkBreakdown, [
+    { label: "NETWORK", value: (row) => row.network, maxWidth: 20 },
+    { label: "MKTS", value: (row) => row.marketCount ?? "-" },
+    { label: "VOL 24H", value: (row) => formatCompactCurrency(row.volume24h) },
+    { label: "TVL", value: (row) => formatCompactCurrency(row.liquidityUsd) },
+    { label: "+/-2% LIQ", value: (row) => formatCompactCurrency(row.liquidity2Pct) },
+    { label: "HOLDERS", value: (row) => row.holders ?? "-" },
+    { label: "MKT CAP", value: (row) => formatCompactCurrency(row.marketCap) }
+  ]);
+}
+
+function renderOnchainMarkets(quote) {
+  if (!quote.onchainMarkets?.length) {
+    return;
+  }
+
+  console.log("");
+  console.log(`${quote.venue} onchain markets`);
+  printTable(quote.onchainMarkets.slice(0, 20), [
+    { label: "NETWORK", value: (row) => row.network, maxWidth: 16 },
+    { label: "DEX", value: (row) => row.dex, maxWidth: 18 },
+    { label: "PAIR", value: (row) => row.pairLabel, maxWidth: 18 },
+    { label: "PRICE", value: (row) => formatCurrency(row.priceUsd, 4) },
+    { label: "VOL 24H", value: (row) => formatCompactCurrency(row.volume24h) },
+    { label: "TVL", value: (row) => formatCompactCurrency(row.liquidityUsd) },
+    { label: "+/-2% LIQ", value: (row) => formatCompactCurrency(row.liquidity2Pct) },
+    { label: "MKT CAP", value: (row) => formatCompactCurrency(row.marketCap) }
+  ]);
+}
+
+function sumMetric(items, field) {
+  const total = (items ?? []).reduce((sum, item) => sum + (item?.[field] ?? 0), 0);
+  return total || null;
+}
+
+function quoteTvl(quote) {
+  return quote.totalValue ?? sumMetric(quote.onchainMarkets, "liquidityUsd");
+}
+
+function quoteLiquidity2Pct(quote) {
+  return quote.liquidity2Pct ?? sumMetric(quote.onchainMarkets, "liquidity2Pct");
+}
+
+function quoteVolume(quote) {
+  return quote.volume24h ?? quote.volume30d;
+}
+
+function quoteOnchainMarketCount(quote) {
+  return quote.onchainMarketCount ?? (quote.onchainMarkets?.length || null);
+}
+
+function hasOkxCredentials() {
+  return hasSetting("OKX_API_KEY") && hasSetting("OKX_SECRET_KEY") && hasSetting("OKX_API_PASSPHRASE");
+}
+
+function quoteAdvisories(quotes = []) {
+  const venues = new Set(quotes.map((quote) => quote.venue));
+  const advisories = [];
+
+  if (
+    ["ondo", "xstocks", "remora"].some((venue) => venues.has(venue)) &&
+    !hasSetting("BIRDEYE_API_KEY") &&
+    !hasSetting("UNIBLOCK_API_KEY")
+  ) {
+    advisories.push("Set UNIBLOCK_API_KEY or BIRDEYE_API_KEY to widen Birdeye market coverage.");
+  }
+
+  if (venues.has("ondo") && !hasSetting("COINGECKO_API_KEY", ["COINGECKO_PRO_API_KEY"])) {
+    advisories.push("Set COINGECKO_API_KEY to enrich Ondo holder counts and holder distribution.");
+  }
+
+  if (venues.has("ondo") && !hasSetting("ONEINCH_API_KEY")) {
+    advisories.push("Set ONEINCH_API_KEY to widen Ondo route-based +/-2% liquidity coverage.");
+  }
+
+  if (venues.has("ondo") && !hasOkxCredentials()) {
+    advisories.push("Set OKX_API_KEY, OKX_SECRET_KEY, and OKX_API_PASSPHRASE to enable OKX wallet quotes and top-holder enrichment.");
+  }
+
+  return advisories;
+}
+
+function discoveryAdvisories() {
+  const advisories = [];
+
+  if (!hasSetting("UNIBLOCK_API_KEY")) {
+    advisories.push("Set UNIBLOCK_API_KEY to widen discovery with CoinMarketCap categories and Birdeye-through-Uniblock.");
+  }
+
+  if (!hasSetting("COINGECKO_API_KEY", ["COINGECKO_PRO_API_KEY"])) {
+    advisories.push("Set COINGECKO_API_KEY for fuller CoinGecko onchain enrichment and holder coverage.");
+  }
+
+  return advisories;
+}
+
+function isIssuerOrOnchainQuote(quote) {
+  return (
+    quote.entityKind === "issuer" ||
+    quote.executionModel === "issuer" ||
+    quote.executionModel === "onchain" ||
+    (quote.onchainMarkets?.length ?? 0) > 0 ||
+    (quote.onchainNetworkBreakdown?.length ?? 0) > 0
+  );
+}
+
 function renderDiscovery(payload) {
   if (payload.cmc.matches.length > 0) {
     console.log("CMC assets");
@@ -178,8 +310,56 @@ function renderDiscovery(payload) {
     }
   }
 
+  if (payload.cmcCategories?.matches?.length > 0) {
+    console.log(
+      payload.cmc.matches.length > 0 || payload.cmc.selected ? "\nCMC tokenized categories" : "CMC tokenized categories"
+    );
+    printTable(payload.cmcCategories.matches, [
+      { label: "SYMBOL", value: (row) => row.symbol },
+      { label: "NAME", value: (row) => row.name, maxWidth: 30 },
+      { label: "CATEGORY", value: (row) => row.category, maxWidth: 22 },
+      { label: "PRICE", value: (row) => formatCurrency(row.price, 4) },
+      { label: "VOL 24H", value: (row) => formatCompactCurrency(row.volume24h) },
+      { label: "MKT CAP", value: (row) => formatCompactCurrency(row.marketCap) }
+    ]);
+  }
+
+  if (payload.dinari?.matches?.length > 0) {
+    console.log(
+      payload.cmc.matches.length > 0 ||
+        payload.cmc.selected ||
+        payload.cmcCategories?.matches?.length > 0 ||
+        payload.coingecko.matches.length > 0
+        ? "\nDinari dShares"
+        : "Dinari dShares"
+    );
+    printTable(payload.dinari.matches, [
+      { label: "SYMBOL", value: (row) => row.symbol },
+      { label: "DSHARE", value: (row) => row.venueTicker },
+      { label: "NAME", value: (row) => row.name, maxWidth: 34 }
+    ]);
+
+    if (payload.dinari.tokens?.length > 0) {
+      console.log("\nDinari wrappers on CMC");
+      printTable(payload.dinari.tokens, [
+        { label: "SYMBOL", value: (row) => row.symbol },
+        { label: "NAME", value: (row) => row.name, maxWidth: 34 },
+        { label: "PRICE", value: (row) => formatCurrency(row.price, 4) },
+        { label: "VOL 24H", value: (row) => formatCompactCurrency(row.volume24h) },
+        { label: "CONTRACTS", value: (row) => row.contractAddresses.length || "-" }
+      ]);
+    }
+  }
+
   if (payload.coingecko.matches.length > 0) {
-    console.log(payload.cmc.matches.length > 0 || payload.cmc.selected ? "\nCoinGecko tokenized gold" : "CoinGecko tokenized gold");
+    console.log(
+      payload.cmc.matches.length > 0 ||
+        payload.cmc.selected ||
+        payload.cmcCategories?.matches?.length > 0 ||
+        payload.dinari?.matches?.length > 0
+        ? "\nCoinGecko tokenized assets"
+        : "CoinGecko tokenized assets"
+    );
     printTable(payload.coingecko.matches, [
       { label: "SYMBOL", value: (row) => row.symbol },
       { label: "NAME", value: (row) => row.name, maxWidth: 32 },
@@ -206,10 +386,18 @@ program
   .command("discover <query>")
   .description("Discover assets, tokenized wrappers, and venue coverage from CMC and CoinGecko")
   .option("--limit <count>", "Limit matches per source", "10")
+  .option("--refresh", "Bypass the discovery cache and fetch fresh source data")
   .action(async (query, options) => {
     const requestedLimit = Number(options.limit);
     const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 10;
-    const payload = await discoverAssets(query, limit);
+    let payload;
+
+    setCacheBypass(Boolean(options.refresh));
+    try {
+      payload = await discoverAssets(query, limit);
+    } finally {
+      setCacheBypass(false);
+    }
 
     emitSuccess(
       "discover",
@@ -219,8 +407,186 @@ program
       {
         query: {
           query,
-          limit
+          limit,
+          refresh: Boolean(options.refresh)
+        },
+        advisories: discoveryAdvisories()
+      }
+    );
+  });
+
+program
+  .command("discover-snapshot <query>")
+  .description("Build a normalized discovery snapshot for downstream ingestion")
+  .option("--limit <count>", "Limit matched assets per source", "25")
+  .option("--refresh", "Bypass the discovery cache and fetch fresh source data")
+  .option("--out <path>", "Write the snapshot JSON to a file")
+  .action(async (query, options) => {
+    const requestedLimit = Number(options.limit);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 25;
+    let payload;
+
+    setCacheBypass(Boolean(options.refresh));
+    try {
+      payload = await discoverAssets(query, limit);
+    } finally {
+      setCacheBypass(false);
+    }
+
+    const snapshot = buildDiscoverySnapshot(payload);
+
+    if (options.out) {
+      const outputPath = path.resolve(options.out);
+      await mkdir(path.dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, JSON.stringify(snapshot, null, 2), "utf8");
+
+      emitSuccess(
+        "discover-snapshot",
+        {
+          path: outputPath,
+          summary: snapshot.summary
+        },
+        options,
+        (data) => {
+          console.log(outputPath);
+          console.log(
+            `tokens=${data.summary.tokenCount} venuePairs=${data.summary.venuePairCount} exchanges=${data.summary.exchangeCount}`
+          );
+        },
+        {
+          query: {
+            query,
+            limit,
+            refresh: Boolean(options.refresh)
+          },
+          advisories: discoveryAdvisories()
         }
+      );
+      return;
+    }
+
+    emitSuccess(
+      "discover-snapshot",
+      snapshot,
+      options,
+      (data) => {
+        console.log(`query: ${data.query}`);
+        console.log(`tokens: ${data.summary.tokenCount}`);
+        console.log(`venue pairs: ${data.summary.venuePairCount}`);
+        console.log(`exchanges: ${data.summary.exchangeCount}`);
+        console.log(`categories: ${data.summary.categoryCount}`);
+      },
+      {
+        query: {
+          query,
+          limit,
+          refresh: Boolean(options.refresh)
+        },
+        advisories: discoveryAdvisories()
+      }
+    );
+  });
+
+const cacheCommand = program
+  .command("cache")
+  .description("Inspect or clear local cache");
+
+cacheCommand
+  .command("clear")
+  .description("Clear local cache files")
+  .action(async (options) => {
+    const result = await clearCache();
+
+    emitSuccess(
+      "cache.clear",
+      result,
+      options,
+      (payload) => {
+        console.log(`Removed ${payload.removed} cache file(s) from ${payload.dir}`);
+      }
+    );
+  });
+
+cacheCommand
+  .command("warm <source>")
+  .description("Warm a cacheable source, e.g. ondo")
+  .action(async (source, options) => {
+    const target = String(source || "").trim().toLowerCase();
+
+    if (target !== "ondo") {
+      fail("UNKNOWN_CACHE_SOURCE", `Unknown cache warm source "${source}"`, { source }, 2);
+    }
+
+    const assets = await fetchOndoAssets();
+    emitSuccess(
+      "cache.warm",
+      {
+        source: target,
+        assets: assets.length
+      },
+      options,
+      (payload) => {
+        console.log(`Warmed ${payload.source} asset list cache with ${payload.assets} asset(s)`);
+      }
+    );
+  });
+
+const configCommand = program
+  .command("config")
+  .description("Manage local API key and runtime configuration");
+
+configCommand
+  .command("set <key> <value>")
+  .description("Persist a config value locally")
+  .action(async (key, value, options) => {
+    const result = setSetting(key, value);
+    emitSuccess(
+      "config.set",
+      result,
+      options,
+      (payload) => {
+        console.log(`Saved ${payload.key} to ${payload.path}`);
+      }
+    );
+  });
+
+configCommand
+  .command("unset <key>")
+  .description("Remove a persisted config value")
+  .action(async (key, options) => {
+    const result = unsetSetting(key);
+    emitSuccess(
+      "config.unset",
+      result,
+      options,
+      (payload) => {
+        console.log(`${payload.existed ? "Removed" : "No value for"} ${payload.key} in ${payload.path}`);
+      }
+    );
+  });
+
+configCommand
+  .command("list")
+  .description("List locally stored config values")
+  .action(async (options) => {
+    const values = listSettings();
+    emitSuccess(
+      "config.list",
+      {
+        path: getConfigPath(),
+        values
+      },
+      options,
+      (payload) => {
+        console.log(payload.path);
+        if (payload.values.length === 0) {
+          console.log("(empty)");
+          return;
+        }
+        printTable(payload.values, [
+          { label: "KEY", value: (row) => row.key },
+          { label: "VALUE", value: (row) => row.value, maxWidth: 48 }
+        ]);
       }
     );
   });
@@ -405,33 +771,63 @@ program
 
         console.log(assetHeader);
         console.log("");
-        printTable(data.quotes, [
-          { label: "VENUE", value: (row) => row.venue },
-          { label: "ENTITY", value: (row) => row.entityKind },
-          { label: "TICKER", value: (row) => row.venueTicker, maxWidth: 18 },
-          { label: "TYPE", value: (row) => row.type },
-          { label: "PRICE", value: (row) => formatCurrency(row.price, 4) },
-          { label: "REF PX", value: (row) => formatCurrency(row.referencePrice, 4) },
-          { label: "DEV", value: (row) => formatSignedPercent(row.priceDeviationPct, 2) },
-          { label: "BID", value: (row) => formatCurrency(row.bid, 4) },
-          { label: "ASK", value: (row) => formatCurrency(row.ask, 4) },
-          { label: "+/-2% LIQ", value: (row) => formatCompactCurrency(row.liquidity2Pct) },
-          {
-            label: "VOLUME",
-            value: (row) => formatCompactCurrency(row.volume24h ?? row.volume30d)
-          },
-          { label: "OI", value: (row) => formatCompactCurrency(row.openInterest) },
-          { label: "FUNDING", value: (row) => formatPercent(row.fundingRate) },
-          {
-            label: "NETWORKS",
-            value: (row) =>
-              (row.supportedNetworks ?? []).map((network) => network.network).join(","),
-            maxWidth: 24
+        const issuerOrOnchainQuotes = data.quotes.filter((quote) => isIssuerOrOnchainQuote(quote));
+        const tradingQuotes = data.quotes.filter((quote) => !isIssuerOrOnchainQuote(quote));
+
+        if (tradingQuotes.length > 0) {
+          if (issuerOrOnchainQuotes.length > 0) {
+            console.log("trading venues");
           }
-        ]);
+
+          printTable(tradingQuotes, [
+            { label: "VENUE", value: (row) => row.venue },
+            { label: "ENTITY", value: (row) => row.entityKind },
+            { label: "TICKER", value: (row) => row.venueTicker, maxWidth: 18 },
+            { label: "TYPE", value: (row) => row.type },
+            { label: "PRICE", value: (row) => formatCurrency(row.price, 4) },
+            { label: "REF PX", value: (row) => formatCurrency(row.referencePrice, 4) },
+            { label: "DEV", value: (row) => formatSignedPercent(row.priceDeviationPct, 2) },
+            { label: "BID", value: (row) => formatCurrency(row.bid, 4) },
+            { label: "ASK", value: (row) => formatCurrency(row.ask, 4) },
+            { label: "+/-2% LIQ", value: (row) => formatCompactCurrency(row.liquidity2Pct) },
+            { label: "VOLUME", value: (row) => formatCompactCurrency(quoteVolume(row)) },
+            { label: "OI", value: (row) => formatCompactCurrency(row.openInterest) },
+            { label: "FUNDING", value: (row) => formatPercent(row.fundingRate) }
+          ]);
+        }
+
+        if (issuerOrOnchainQuotes.length > 0) {
+          if (tradingQuotes.length > 0) {
+            console.log("");
+            console.log("issuer / onchain entities");
+          }
+
+          printTable(issuerOrOnchainQuotes, [
+            { label: "VENUE", value: (row) => row.venue },
+            { label: "ENTITY", value: (row) => row.entityKind },
+            { label: "MODEL", value: (row) => row.executionModel ?? "-" },
+            { label: "TICKER", value: (row) => row.venueTicker, maxWidth: 18 },
+            { label: "TYPE", value: (row) => row.type },
+            { label: "PRICE", value: (row) => formatCurrency(row.price, 4) },
+            { label: "TVL", value: (row) => formatCompactCurrency(quoteTvl(row)) },
+            { label: "+/-2% LIQ", value: (row) => formatCompactCurrency(quoteLiquidity2Pct(row)) },
+            { label: "HOLDERS", value: (row) => row.holders ?? "-" },
+            { label: "ONCHAIN MC", value: (row) => formatCompactCurrency(row.onchainMarketCap) },
+            { label: "VOLUME", value: (row) => formatCompactCurrency(quoteVolume(row)) },
+            { label: "MKTS", value: (row) => quoteOnchainMarketCount(row) ?? "-" },
+            {
+              label: "NETWORKS",
+              value: (row) =>
+                (row.supportedNetworks ?? []).map((network) => network.network).join(","),
+              maxWidth: 24
+            }
+          ]);
+        }
 
         for (const quote of data.quotes) {
           renderNetworkBreakdown(quote);
+          renderOnchainNetworkBreakdown(quote);
+          renderOnchainMarkets(quote);
           renderExplorerLinks(quote);
         }
       },
@@ -440,7 +836,8 @@ program
           asset,
           venue,
           exact: Boolean(options.exact)
-        }
+        },
+        advisories: quoteAdvisories(quotes)
       }
     );
   });

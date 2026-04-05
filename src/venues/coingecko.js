@@ -5,15 +5,18 @@ import {
   resolveAssetName
 } from "../lib/assets.js";
 import { toNumber } from "../lib/http.js";
+import { getSetting } from "../lib/config.js";
 import {
   enrichCoinGeckoToken,
-  fetchCoinGeckoTokenizedGoldMarkets
+  fetchCoinGeckoDiscoveryMarkets
 } from "../lib/coingecko.js";
 
-function coinGeckoSourceUrl() {
-  return process.env.COINGECKO_API_KEY || process.env.COINGECKO_PRO_API_KEY
-    ? "https://pro-api.coingecko.com/api/v3/coins/markets?category=tokenized-gold"
-    : "https://api.coingecko.com/api/v3/coins/markets?category=tokenized-gold";
+function coinGeckoSourceUrl(categories = []) {
+  const base = getSetting("COINGECKO_API_KEY", ["COINGECKO_PRO_API_KEY"])
+    ? "https://pro-api.coingecko.com/api/v3/coins/markets"
+    : "https://api.coingecko.com/api/v3/coins/markets";
+  const category = categories[0] ?? "tokenized-gold";
+  return `${base}?category=${category}`;
 }
 
 function toMarket(token) {
@@ -33,7 +36,7 @@ function toMarket(token) {
 }
 
 export async function listMarkets() {
-  const tokens = await fetchCoinGeckoTokenizedGoldMarkets();
+  const tokens = await fetchCoinGeckoDiscoveryMarkets();
   return tokens
     .filter((token) => token.current_price !== null)
     .map((token) => toMarket(token));
@@ -41,7 +44,7 @@ export async function listMarkets() {
 
 export async function getQuotes(symbols) {
   const wanted = new Set(symbols.map((symbol) => canonicalSymbol(symbol)));
-  const tokens = await fetchCoinGeckoTokenizedGoldMarkets();
+  const tokens = await fetchCoinGeckoDiscoveryMarkets();
   const matched = tokens
     .filter((token) => token.current_price !== null)
     .filter((token) => wanted.has(canonicalSymbol(token.symbol)));
@@ -71,7 +74,7 @@ export async function getQuotes(symbols) {
         category: inferCategory(symbol, name),
         supportedNetworks: enriched.supportedNetworks ?? [],
         networkBreakdown: [],
-        source: coinGeckoSourceUrl()
+        source: coinGeckoSourceUrl(enriched.discoveryCategories)
       };
     })
   );

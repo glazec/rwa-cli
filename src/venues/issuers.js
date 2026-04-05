@@ -31,6 +31,7 @@ function createIssuerAdapter(config) {
       type: "issuer",
       category: "issuer",
       entityKind: "issuer",
+      executionModel: "issuer",
       aliases: createIssuerAliases(
         config.symbol,
         config.venue,
@@ -45,6 +46,8 @@ function createIssuerAdapter(config) {
   }
 
   function toQuote(platform) {
+    const networkBreakdown = toRwaNetworkBreakdown(platform.network_stats ?? []);
+
     return {
       venue: config.venue,
       venueTicker: config.venue,
@@ -53,18 +56,23 @@ function createIssuerAdapter(config) {
       type: "issuer",
       category: "issuer",
       entityKind: "issuer",
+      executionModel: "issuer",
       price: null,
       bid: null,
       ask: null,
       liquidity2Pct: null,
       volume24h: null,
       volume30d: toNumber(platform.trailing_30_day_transfer_volume?.val),
+      holders: toNumber(platform.holding_addresses_count?.val),
       totalValue: toNumber(platform.bridged_token_value_dollar?.val),
+      onchainMarketCap: toNumber(platform.bridged_token_market_cap_dollar?.val),
+      circulatingMarketCap: toNumber(platform.circulating_asset_value_dollar?.val),
       openInterest: null,
       fundingRate: null,
       fundingRateApr: null,
       supportedNetworks: toRwaSupportedNetworks(platform.network_stats ?? []),
-      networkBreakdown: toRwaNetworkBreakdown(platform.network_stats ?? []),
+      networkBreakdown,
+      onchainNetworkBreakdown: networkBreakdown,
       source: `https://app.rwa.xyz/platforms/${config.platformSlug}`
     };
   }

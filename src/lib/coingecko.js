@@ -1,14 +1,45 @@
 import { fetchJson } from "./http.js";
-import { tokenExplorerUrl } from "./networks.js";
+import { normalizeNetworkKey, tokenExplorerUrl } from "./networks.js";
+import { getOrSetCachedJson } from "./cache.js";
+import { getSetting } from "./config.js";
 
 const COINGECKO_PUBLIC_API_URL = "https://api.coingecko.com/api/v3";
 const COINGECKO_PRO_API_URL = "https://pro-api.coingecko.com/api/v3";
 const TOKENIZED_GOLD_CATEGORY = "tokenized-gold";
+export const COINGECKO_DISCOVERY_CATEGORIES = [
+  TOKENIZED_GOLD_CATEGORY,
+  "tokenized-silver",
+  "tokenized-commodities",
+  "tokenized-stock",
+  "tokenized-exchange-traded-funds-etfs",
+  "tokenized-products",
+  "real-estate",
+  "tokenized-t-bills",
+  "tokenized-treasury-bonds-t-bonds",
+  "xstocks-ecosystem",
+  "remora-markets-tokenized-rstocks",
+  "ondo-tokenized-assets"
+];
 
 const detailCache = new Map();
-let tokenizedGoldCache = null;
+const discoveryCategoryCache = new Map();
+const onchainTokenInfoCache = new Map();
 
-function dedupeByCanonicalSymbol(tokens) {
+const COINGECKO_ONCHAIN_NETWORKS = {
+  ethereum: "eth",
+  base: "base",
+  arbitrum: "arbitrum",
+  optimism: "optimism",
+  polygon: "polygon_pos",
+  bnb: "bsc",
+  bnbchain: "bsc",
+  bsc: "bsc",
+  solana: "solana",
+  ton: "ton",
+  sui: "sui"
+};
+
+function dedupeDiscoveryTokens(tokens) {
   const bestBySymbol = new Map();
 
   for (const token of tokens) {
@@ -16,17 +47,21 @@ function dedupeByCanonicalSymbol(tokens) {
     const existing = bestBySymbol.get(symbol);
     const existingMarketCap = Number(existing?.market_cap ?? -1);
     const nextMarketCap = Number(token.market_cap ?? -1);
+    const preferred = !existing || nextMarketCap > existingMarketCap ? token : existing;
 
-    if (!existing || nextMarketCap > existingMarketCap) {
-      bestBySymbol.set(symbol, token);
-    }
+    bestBySymbol.set(symbol, {
+      ...preferred,
+      discoveryCategories: [
+        ...new Set([...(existing?.discoveryCategories ?? []), ...(token.discoveryCategories ?? [])])
+      ]
+    });
   }
 
   return [...bestBySymbol.values()];
 }
 
 function coinGeckoHeaders() {
-  const apiKey = process.env.COINGECKO_API_KEY || process.env.COINGECKO_PRO_API_KEY;
+  const apiKey = getSetting("COINGECKO_API_KEY", ["COINGECKO_PRO_API_KEY"]);
 
   return apiKey
     ? {
@@ -36,25 +71,56 @@ function coinGeckoHeaders() {
 }
 
 function coinGeckoApiUrl() {
-  const apiKey = process.env.COINGECKO_API_KEY || process.env.COINGECKO_PRO_API_KEY;
+  const apiKey = getSetting("COINGECKO_API_KEY", ["COINGECKO_PRO_API_KEY"]);
   return apiKey ? COINGECKO_PRO_API_URL : COINGECKO_PUBLIC_API_URL;
 }
 
+export function coinGeckoOnchainNetworkForNetwork(network) {
+  return COINGECKO_ONCHAIN_NETWORKS[normalizeNetworkKey(network)] ?? null;
+}
+
 export async function fetchCoinGeckoTokenizedGoldMarkets() {
-  if (tokenizedGoldCache) {
-    return tokenizedGoldCache;
+  return fetchCoinGeckoCategoryMarkets(TOKENIZED_GOLD_CATEGORY);
+}
+
+export async function fetchCoinGeckoCategoryMarkets(category) {
+  if (discoveryCategoryCache.has(category)) {
+    return discoveryCategoryCache.get(category);
   }
 
-  const json = await fetchJson(
-    `${coinGeckoApiUrl()}/coins/markets?vs_currency=usd&category=${TOKENIZED_GOLD_CATEGORY}&order=market_cap_desc&per_page=50&page=1&sparkline=false&price_change_percentage=24h`,
-    {
-      headers: coinGeckoHeaders()
-    },
-    15000
+  const markets = await getOrSetCachedJson(`coingecko-category-${category}-markets-v1`, async () => {
+    const json = await fetchJson(
+      `${coinGeckoApiUrl()}/coins/markets?vs_currency=usd&category=${encodeURIComponent(
+        category
+      )}&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h`,
+      {
+        headers: coinGeckoHeaders()
+      },
+      15000
+    );
+
+    return (Array.isArray(json) ? json : []).map((token) => ({
+      ...token,
+      discoveryCategories: [category]
+    }));
+  });
+
+  discoveryCategoryCache.set(category, markets);
+  return markets;
+}
+
+export async function fetchCoinGeckoDiscoveryMarkets() {
+  const categories = await Promise.all(
+    COINGECKO_DISCOVERY_CATEGORIES.map(async (category) => {
+      try {
+        return await fetchCoinGeckoCategoryMarkets(category);
+      } catch {
+        return [];
+      }
+    })
   );
 
-  tokenizedGoldCache = dedupeByCanonicalSymbol(Array.isArray(json) ? json : []);
-  return tokenizedGoldCache;
+  return dedupeDiscoveryTokens(categories.flat());
 }
 
 export async function fetchCoinGeckoCoinDetail(id) {
@@ -62,17 +128,46 @@ export async function fetchCoinGeckoCoinDetail(id) {
     return detailCache.get(id);
   }
 
-  const detail = await fetchJson(
-    `${coinGeckoApiUrl()}/coins/${encodeURIComponent(
-      id
-    )}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false&sparkline=false`,
-    {
-      headers: coinGeckoHeaders()
-    },
-    15000
-  );
+  const detail = await getOrSetCachedJson(`coingecko-coin-detail-${id}-v1`, async () => {
+    return await fetchJson(
+      `${coinGeckoApiUrl()}/coins/${encodeURIComponent(
+        id
+      )}?localization=false&tickers=false&market_data=false&community_data=false&developer_data=false&sparkline=false`,
+      {
+        headers: coinGeckoHeaders()
+      },
+      15000
+    );
+  });
 
   detailCache.set(id, detail);
+  return detail;
+}
+
+export async function fetchCoinGeckoOnchainTokenInfo(address, network) {
+  const onchainNetwork = coinGeckoOnchainNetworkForNetwork(network);
+  if (!address || !onchainNetwork) {
+    return null;
+  }
+
+  const cacheKey = `coingecko-onchain-token-info-${onchainNetwork}-${String(address).toLowerCase()}`;
+  if (onchainTokenInfoCache.has(cacheKey)) {
+    return onchainTokenInfoCache.get(cacheKey);
+  }
+
+  const detail = await getOrSetCachedJson(cacheKey, async () => {
+    const json = await fetchJson(
+      `${coinGeckoApiUrl()}/onchain/networks/${encodeURIComponent(onchainNetwork)}/tokens/${encodeURIComponent(address)}/info`,
+      {
+        headers: coinGeckoHeaders()
+      },
+      15000
+    );
+
+    return json?.data?.attributes ?? null;
+  });
+
+  onchainTokenInfoCache.set(cacheKey, detail);
   return detail;
 }
 
@@ -91,18 +186,20 @@ export async function enrichCoinGeckoToken(coin) {
     return {
       ...coin,
       categories: detail?.categories ?? [],
+      discoveryCategories: coin.discoveryCategories ?? [],
       supportedNetworks
     };
   } catch {
     return {
       ...coin,
       categories: [],
+      discoveryCategories: coin.discoveryCategories ?? [],
       supportedNetworks: []
     };
   }
 }
 
-export function findCoinGeckoTokenizedGoldMatches(tokens, query, limit = 10) {
+export function findCoinGeckoMatches(tokens, query, limit = 10) {
   const normalized = String(query || "").trim().toLowerCase();
 
   return tokens
@@ -115,4 +212,8 @@ export function findCoinGeckoTokenizedGoldMatches(tokens, query, limit = 10) {
       );
     })
     .slice(0, limit);
+}
+
+export function findCoinGeckoTokenizedGoldMatches(tokens, query, limit = 10) {
+  return findCoinGeckoMatches(tokens, query, limit);
 }
