@@ -1,5 +1,5 @@
 {
-  "name": "rwa",
+  "name": "rwa-cli",
   "version": "0.1.0",
   "description": "CLI for tokenized real-world asset market discovery and quotes across venues.",
   "type": "module",
