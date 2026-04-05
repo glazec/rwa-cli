@@ -248,6 +248,42 @@ export RWA_SLIPPAGE_CACHE_TTL_HOURS=1
 - `resolve` gives agents a deterministic first step for canonical symbol lookup before calling `quote`.
 - `quote --exact` avoids fuzzy matching when an agent already knows the intended symbol.
 
+## Claude Code Plugin
+
+This repo ships as a Claude Code plugin with built-in skills for AI-assisted RWA research.
+
+### Install
+
+Add the plugin in Claude Code:
+
+```bash
+claude plugin add /path/to/rwa-cli
+```
+
+### What you get
+
+- **`rwa-research` skill** (auto-triggered): When you mention tokenized assets, RWA tokens, venue coverage, or onchain liquidity in conversation, Claude automatically knows how to use the `rwa` CLI to answer.
+- **`/rwa` command** (user-invoked): Quick lookup shortcut.
+
+```bash
+/rwa quote tsla           # cross-venue price comparison
+/rwa discover gold        # find tokenized gold wrappers
+/rwa resolve nvda         # canonical symbol + venue coverage
+/rwa assets --venue ondo  # list assets on a venue
+/rwa venues               # all supported venues
+/rwa tsla                 # bare query, auto-detects command
+```
+
+### Plugin structure
+
+```
+.claude-plugin/
+  plugin.json              # plugin metadata
+skills/
+  rwa-research/SKILL.md    # auto-triggered on RWA-related queries
+  rwa/SKILL.md             # /rwa slash command
+```
+
 ## License
 
 [MIT](./LICENSE)

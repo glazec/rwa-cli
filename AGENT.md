@@ -77,6 +77,15 @@ Common keys:
 - clear cache with `rwa cache clear`
 - warm Ondo asset cache with `rwa cache warm ondo`
 
+## Claude Code Plugin
+
+This repo is also a Claude Code plugin. When installed, it provides:
+
+- **`rwa-research` skill**: auto-triggered when the conversation involves tokenized assets, RWA tokens, venue coverage, or onchain liquidity. Guides the agent through the discover/resolve/quote workflow.
+- **`/rwa` command**: user-invoked slash command for quick lookups (`/rwa quote tsla`, `/rwa discover gold`, `/rwa tsla`).
+
+Plugin files live in `.claude-plugin/` and `skills/`.
+
 ## Publishing
 
 Before publishing:

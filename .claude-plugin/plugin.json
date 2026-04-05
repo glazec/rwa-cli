@@ -1,0 +1,9 @@
+{
+  "name": "rwa-cli",
+  "description": "Tokenized real-world asset market discovery, venue quotes, and onchain liquidity analysis via the rwa CLI",
+  "version": "0.1.0",
+  "author": {
+    "name": "rwa-cli"
+  },
+  "license": "MIT"
+}

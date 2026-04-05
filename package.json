@@ -8,7 +8,7 @@
     "README.md"
   ],
   "bin": {
-    "rwa": "./src/cli.js"
+    "rwa": "src/cli.js"
   },
   "engines": {
     "node": ">=20"
