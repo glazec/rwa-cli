@@ -3,15 +3,21 @@
   "version": "0.1.0",
   "description": "CLI for tokenized real-world asset market discovery and quotes across venues.",
   "type": "module",
+  "files": [
+    "src",
+    "README.md"
+  ],
   "bin": {
     "rwa": "./src/cli.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "test": "node --test",
-    "verify:data": "node scripts/verify-data.js"
+    "verify:data": "node scripts/verify-data.js",
+    "pack:check": "npm pack --dry-run",
+    "prepack": "npm test"
   },
   "keywords": [
     "rwa",
@@ -20,7 +26,11 @@
     "stocks",
     "commodities"
   ],
+  "preferGlobal": true,
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "commander": "^14.0.1",
     "ws": "^8.18.3"

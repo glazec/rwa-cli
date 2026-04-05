@@ -42,6 +42,7 @@ Current commands:
 ## Install
 
 ```bash
+node --version   # requires Node 20+
 npm install
 npm link
 ```
@@ -50,6 +51,19 @@ Or run without linking:
 
 ```bash
 node src/cli.js quote tsla
+```
+
+Publish smoke check:
+
+```bash
+npm test
+npm run pack:check
+```
+
+After logging into npm:
+
+```bash
+npm publish
 ```
 
 ## Examples
