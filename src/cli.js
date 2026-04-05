@@ -380,7 +380,7 @@ program
   .description("Tokenized RWA market discovery and venue quotes")
   .option("--json", "Output raw JSON")
   .option("--agent", "Output structured machine-readable envelopes and errors")
-  .version("0.1.0");
+  .version("0.2.0");
 
 program
   .command("discover <query>")
