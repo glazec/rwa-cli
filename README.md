@@ -1,6 +1,18 @@
 # `rwa`
 
-`rwa` is a small CLI for discovering tokenized real-world asset markets and comparing live venue quotes.
+`rwa` is a Node.js CLI for discovering tokenized real-world asset markets, resolving asset wrappers, and comparing live quotes across centralized exchanges, issuers, and onchain venues.
+
+It is designed for research, monitoring, and downstream agent workflows where you need one command-line surface for:
+
+- venue discovery
+- symbol and wrapper resolution
+- normalized quote comparison
+- machine-friendly JSON and agent output
+
+## Requirements
+
+- Node.js `20+`
+- npm
 
 Current venue adapters:
 
@@ -41,13 +53,21 @@ Current commands:
 
 ## Install
 
+Clone the repo and install dependencies:
+
 ```bash
-node --version   # requires Node 20+
+node --version
 npm install
 npm link
 ```
 
-Or run without linking:
+Run the CLI from the shell:
+
+```bash
+rwa quote tsla
+```
+
+Or run it directly without linking:
 
 ```bash
 node src/cli.js quote tsla
@@ -227,3 +247,7 @@ export RWA_SLIPPAGE_CACHE_TTL_HOURS=1
 - Structured errors are emitted with machine-readable `error.code`, `error.message`, and `error.details`.
 - `resolve` gives agents a deterministic first step for canonical symbol lookup before calling `quote`.
 - `quote --exact` avoids fuzzy matching when an agent already knows the intended symbol.
+
+## License
+
+[MIT](./LICENSE)
