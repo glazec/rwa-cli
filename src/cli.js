@@ -842,6 +842,22 @@ program
     );
   });
 
+const exportCmd = program
+  .command("export")
+  .description("Export data in structured formats");
+
+exportCmd
+  .command("supabase-snapshot")
+  .description("Export a versioned snapshot for Supabase import")
+  .action(async (options) => {
+    const { buildSupabaseSnapshot } = await import("./export/supabase-snapshot.js");
+    const snapshot = await buildSupabaseSnapshot();
+
+    const output = getOutputOptions(options);
+    // Always output JSON for this command (it's machine-oriented)
+    console.log(JSON.stringify(snapshot, null, output.json === false ? 0 : 2));
+  });
+
 program.parseAsync(process.argv).catch((error) => {
   const output = getOutputOptions();
 

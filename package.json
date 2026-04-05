@@ -13,6 +13,10 @@
   "bin": {
     "rwa": "src/cli.js"
   },
+  "exports": {
+    ".": "./src/export/supabase-snapshot.js",
+    "./snapshot": "./src/export/supabase-snapshot.js"
+  },
   "engines": {
     "node": ">=20"
   },
