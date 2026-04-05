@@ -171,6 +171,7 @@ export async function getQuotes(symbols) {
 
     return {
       venue: "lighter",
+      executionModel: "offchain",
       venueTicker: String(market.raw.symbol),
       symbol: market.symbol,
       name: market.name,
